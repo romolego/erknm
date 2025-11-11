@@ -1,1 +1,554 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Открытые данные — «первичный файл → авто-переход по ссылкам → парсинг» (обновлено: прямое скачивание + RAW GitHub)</title>
+<style>
+  :root{--bg:#fff;--fg:#0f172a;--muted:#64748b;--card:#f8fafc;--line:#e2e8f0;--accent:#0ea5e9;--ok:#059669;--warn:#d97706;--err:#dc2626}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+  h1{font-size:18px;margin:14px 0}
+  .wrap{max-width:1280px;margin:0 auto;padding:16px}
+  .grid{display:grid;gap:12px}
+  .g2{grid-template-columns:1fr 1fr}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .col{display:flex;flex-direction:column;gap:6px}
+  button{border:1px solid var(--line);background:#fff;color:var(--fg);padding:8px 12px;border-radius:10px;cursor:pointer}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  input[type=text]{padding:9px 10px;border:1px solid var(--line);border-radius:10px;width:100%}
+  .small{font-size:12px;color:var(--muted)}
+  .status{padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .list{max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
+  .rowline{display:flex;gap:12px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line)}
+  .rowline:last-child{border-bottom:0}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New"}
+  .tag{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:12px;background:#fff;margin-right:6px}
+  .ok{color:var(--ok);border-color:var(--ok)} .warn{color:var(--warn);border-color:var(--warn)} .err{color:var(--err);border-color:var(--err)}
+  .drop{border:2px dashed var(--line);border-radius:12px;padding:16px;background:#fff}
+  .table{width:100%;border-collapse:collapse;font-size:13px}
+  .table th,.table td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+  .trim{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pill{display:inline-flex;gap:8px;align-items:center}
+  .progress{height:8px;background:#fff;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .bar{height:100%;width:0;background:linear-gradient(90deg,var(--accent),#22c55e)}
+  .linkbtn{border:1px solid var(--line);padding:7px 10px;border-radius:10px;text-decoration:none;color:var(--fg);background:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Авто-цепочка: локальный первичный XML → извлечь ссылки → скачать/распарсить → показать данные</h1>
+
+  <div class="grid g2">
+    <div class="card">
+      <div class="col">
+        <div class="small">Шаг 1. Загрузите первичный локальный XML/ZIP (например, list.xml или plan-2025.xml). Схемы не используются — только фактическое содержимое.</div>
+        <div class="drop" id="dropZone">Перетащите сюда XML/ZIP (можно несколько)</div>
+        <div class="row">
+          <input id="fileInput" type="file" multiple/>
+          <button id="btnClear">Очистить всё</button>
+        </div>
+        <div id="status" class="status small">Готово</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="col">
+        <div class="small">Шаг 1a. Вставьте прямую ссылку на XML/ZIP (RAW GitHub поддерживается)</div>
+        <div class="row">
+          <input id="directUrl" type="text" placeholder="https://raw.githubusercontent.com/user/repo/branch/file.xml"/>
+          <button id="btnFetchUrl" class="primary">Скачать и распарсить</button>
+        </div>
+        <div class="small">Если источник не отдаёт CORS, используйте привязку URL к локальному файлу ниже.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div class="pill"><span class="tag">Каталог</span><b>Ссылки из текущего документа</b></div>
+        <div class="small">К каждой ссылке доступны: «Открыть (автопарсинг)», «Скачать», «Привязать локальный».</div>
+      </div>
+      <div id="linksBox" class="list"></div>
+    </div>
+
+    <div class="card">
+      <div class="col">
+        <div class="row" style="justify-content:space-between">
+          <div class="pill"><span class="tag">Мета</span><b>Информация о текущем документе</b></div>
+          <div class="small">title/identifier/created/описание</div>
+        </div>
+        <div id="metaBox" class="list"></div>
+
+        <div class="row" style="justify-content:space-between;margin-top:10px">
+          <div class="pill"><span class="tag">Привязки</span><b>URL → локальный файл</b></div>
+          <div class="small">Используется при запрете CORS</div>
+        </div>
+        <div id="bindingsBox" class="list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div class="pill"><span class="tag">Очередь</span><b>Авто-переходы</b></div>
+        <div class="small">Загрузка/распаковка</div>
+      </div>
+      <div class="progress"><div id="bar" class="bar"></div></div>
+      <div id="queueBox" class="list"></div>
+      <div class="row">
+        <button id="btnRunQueue" class="primary">Запустить очередь</button>
+        <button id="btnStopQueue">Остановить</button>
+        <button id="btnAddAll">Добавить все ссылки</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div class="pill"><span class="tag">Данные</span><b>Предпросмотр</b></div>
+        <div class="row">
+          <input id="filterText" type="text" placeholder="Фильтр (ИНН/название/регион)"/>
+          <button id="btnPreview" disabled>Показать 10</button>
+          <button id="btnExport" disabled>Экспорт JSON</button>
+          <button id="btnResetView">Сброс</button>
+        </div>
+      </div>
+      <div id="dataBox" class="list" style="max-height:420px"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Утилиты */
+const $ = s => document.querySelector(s);
+const statusEl = $('#status'), linksBox = $('#linksBox'), metaBox = $('#metaBox'),
+      queueBox = $('#queueBox'), dataBox = $('#dataBox'), bindingsBox = $('#bindingsBox'),
+      btnPreview = $('#btnPreview'), btnExport = $('#btnExport'), filterText = $('#filterText'),
+      bar = $('#bar'), directUrl = $('#directUrl'), btnFetchUrl = $('#btnFetchUrl');
+
+function setStatus(t, cls=''){ statusEl.className='status small '+cls; statusEl.textContent=t; }
+function escapeHtml(s){ return (s??'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m])); }
+function asText(root, sel){ const el = sel.includes('>') ? root.querySelector(sel) : root.getElementsByTagName(sel)[0]; return el ? (el.textContent||'').trim() : ''; }
+function ab2u8(ab){ return new Uint8Array(ab); }
+function isZip(u8){ return u8.length>=4 && u8[0]==0x50 && u8[1]==0x4B && u8[2]==0x03 && u8[3]==0x04; }
+function isCorsLikelyAllowed(u){
+  try{
+    const host = new URL(u).host;
+    return /(^|\.)(raw\.githubusercontent\.com|github\.io|gist\.githubusercontent\.com)$/i.test(host);
+  }catch{ return false; }
+}
+
+/* Состояние */
+const localStore = new Map(); // name -> { text, u8, doc, type, links:[{text,href,created,prov}], nodes:Element[] }
+const urlBindings = new Map(); // url -> localFileName
+const visited = new Map();     // url -> { kind, name, doc, nodes, links }
+let currentDocName = null;
+let currentNodes = [];
+let currentSample = [];
+const queue = [];
+let stopFlag = false;
+let lastLinks = [];
+
+/* ZIP распаковка (store/deflate) через DecompressionStream */
+async function unzip(u8){
+  function dv(u,off,len){ return new DataView(u.buffer,u.byteOffset+off,len); }
+  function u16(v,o){ return v.getUint16(o,true); }
+  function u32(v,o){ return v.getUint32(o,true); }
+  function sig(u,off){ return u32(dv(u,off,4),0); }
+  let eocd=-1;
+  for(let i=u8.length-22;i>=0;i--){ if(sig(u8,i)===0x06054b50){ eocd=i; break; } }
+  if(eocd<0) throw new Error('ZIP: EOCD not found');
+  const vEO = dv(u8,eocd,22);
+  const entries = u16(vEO,10);
+  const cdOff  = u32(vEO,16);
+  const out = {};
+  let p = cdOff;
+  for(let i=0;i<entries;i++){
+    if(sig(u8,p)!==0x02014b50) throw new Error('ZIP: central dir bad');
+    const v = dv(u8,p,46);
+    const nameLen = u16(v,28), extraLen=u16(v,30), cmntLen=u16(v,32);
+    const lhoff = u32(v,42);
+    const name = new TextDecoder().decode(u8.subarray(p+46, p+46+nameLen));
+    p += 46 + nameLen + extraLen + cmntLen;
+    if(sig(u8,lhoff)!==0x04034b50) throw new Error('ZIP: local header bad');
+    const vh = dv(u8,lhoff,30);
+    const meth = u16(vh,8);
+    const nLen = u16(vh,26), xLen=u16(vh,28);
+    const dataStart = lhoff + 30 + nLen + xLen;
+    const compSize = u32(v,20);
+    const comp = u8.subarray(dataStart, dataStart+compSize);
+    if(meth===0){ out[name]=comp; }
+    else if(meth===8){
+      const s = new DecompressionStream('deflate-raw');
+      const buf = await new Response(new Blob([comp]).stream().pipeThrough(s)).arrayBuffer();
+      out[name] = new Uint8Array(buf);
+    }
+  }
+  return out;
+}
+
+/* XML парсинг и эвристики */
+function parseXml(text){
+  const p = new DOMParser(); const doc = p.parseFromString(text,'application/xml');
+  if(doc.querySelector('parsererror')) throw new Error('XML parse error');
+  return doc;
+}
+function detectType(doc){
+  if(doc.getElementsByTagName('list').length && doc.getElementsByTagName('item').length) return 'list';
+  if(doc.getElementsByTagName('meta').length || doc.getElementsByTagName('dataversion').length) return 'meta';
+  return 'data';
+}
+function extractLinksFromList(doc){
+  const res = [];
+  const items = Array.from(doc.getElementsByTagName('item'));
+  for(const it of items){
+    res.push({
+      text: (it.getAttribute('title')||'').trim(),
+      href: (it.getAttribute('link')||'').trim(),
+      created: '',
+      prov: ''
+    });
+  }
+  return res;
+}
+function extractLinksFromMeta(doc){
+  const res = [];
+  const dvs = Array.from(doc.getElementsByTagName('dataversion'));
+  for(const dv of dvs){
+    const src = asText(dv,'source'); const created = asText(dv,'created'); const prov = asText(dv,'provenance');
+    if(src) res.push({ text: (created?created+' — ':'')+(prov||'').trim(), href: src.trim(), created, prov });
+  }
+  if(!res.length){
+    const walker = doc.createTreeWalker(doc, NodeFilter.SHOW_TEXT, null);
+    const urlRe = /https?:\/\/\S+/g;
+    while(walker.nextNode()){
+      const t=(walker.currentNode.nodeValue||'').trim();
+      const m=t.match(urlRe);
+      if(m) m.forEach(u=>res.push({text:u, href:u, created:'',prov:''}));
+    }
+  }
+  return res;
+}
+function detectRepeater(root){
+  const freq = new Map();
+  const els = root.getElementsByTagName('*');
+  for(const el of els){ if(el.children && el.children.length) freq.set(el.tagName, (freq.get(el.tagName)||0)+1); }
+  let best=null,c=0; freq.forEach((v,k)=>{ if(v>c){c=v;best=k;} });
+  if(!best) return [];
+  return Array.from(root.getElementsByTagName(best));
+}
+
+/* Рендеры */
+function renderMetaInfo(doc){
+  metaBox.innerHTML = '';
+  const box = document.createElement('div'); box.className='rowline'; box.style.flexDirection='column';
+  const title = asText(doc,'title'), identifier=asText(doc,'identifier'), creator=asText(doc,'creator'),
+        subject=asText(doc,'subject'), desc=asText(doc,'description'), created=asText(doc,'created');
+  box.innerHTML = `
+    <div><b>${escapeHtml(title||'(без названия)')}</b></div>
+    <div class="small">Идентификатор: <span class="mono">${escapeHtml(identifier||'-')}</span></div>
+    <div class="small">Создатель: ${escapeHtml(creator||'-')}</div>
+    <div class="small">Тема: ${escapeHtml(subject||'-')}</div>
+    <div class="small">Создано/обновлено: ${escapeHtml(created||'-')}</div>
+    <div class="small">${escapeHtml(desc||'')}</div>
+  `;
+  metaBox.appendChild(box);
+}
+function renderLinks(list){
+  linksBox.innerHTML = '';
+  if(!list.length){ linksBox.innerHTML = '<div class="rowline small">Ссылок не найдено</div>'; return; }
+  for(const it of list){
+    const bound = urlBindings.get(it.href);
+    const row = document.createElement('div'); row.className='rowline';
+    const a = document.createElement('a');
+    a.href = it.href;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.className = 'linkbtn';
+    a.textContent = 'Скачать';
+    row.innerHTML = `
+      <div class="trim" style="flex:1 1 auto">
+        <div><b>${escapeHtml(it.text||'(без описания)')}</b></div>
+        <div class="small mono">${escapeHtml(it.href)}</div>
+      </div>
+      <div class="row">
+        <button class="primary" data-open>Открыть (автопарсинг)</button>
+        ${bound? `<span class="tag ok">локально: ${escapeHtml(bound)}</span>`:''}
+        <button data-bind>Привязать локальный</button>
+      </div>
+    `;
+    row.querySelector('[data-open]').onclick = ()=> enqueue(it.href);
+    row.querySelector('[data-bind]').onclick = ()=> bindLocalForUrl(it.href);
+    row.querySelector('.row').insertBefore(a, row.querySelector('[data-bind]'));
+    linksBox.appendChild(row);
+  }
+}
+function renderBindings(){
+  bindingsBox.innerHTML = '';
+  if(!urlBindings.size){ bindingsBox.innerHTML = '<div class="rowline small">Нет привязок URL → локальные файлы</div>'; return; }
+  for(const [u,n] of urlBindings){
+    const row=document.createElement('div'); row.className='rowline';
+    row.innerHTML = `
+      <div class="trim" style="flex:1 1 auto">
+        <div class="small">URL</div>
+        <div class="mono small">${escapeHtml(u)}</div>
+      </div>
+      <div class="trim" style="flex:0 0 auto">
+        <div class="small">Файл</div>
+        <div class="mono small">${escapeHtml(n)}</div>
+      </div>
+      <div class="row"><button data-del>Удалить</button></div>
+    `;
+    row.querySelector('[data-del]').onclick = ()=>{ urlBindings.delete(u); renderBindings(); renderLinks(lastLinks); };
+    bindingsBox.appendChild(row);
+  }
+}
+function renderQueue(){
+  queueBox.innerHTML = '';
+  if(!queue.length){ queueBox.innerHTML = '<div class="rowline small">Очередь пуста</div>'; bar.style.width='0%'; return; }
+  queue.forEach(q=>{
+    const row = document.createElement('div'); row.className='rowline';
+    row.innerHTML = `
+      <div class="trim" style="flex:1 1 auto"><div class="mono small">${escapeHtml(q.url)}</div></div>
+      <div class="small">${q.status}</div>
+    `;
+    queueBox.appendChild(row);
+  });
+}
+function renderDataPreview(arr){
+  dataBox.innerHTML='';
+  if(!arr.length){ dataBox.innerHTML='<div class="rowline small">Нет данных для предпросмотра</div>'; return; }
+  const keys=new Set(); arr.forEach(o=>Object.keys(o).forEach(k=>keys.add(k)));
+  const cols=Array.from(keys);
+  const tbl=document.createElement('table'); tbl.className='table';
+  const thead=document.createElement('thead'); const trh=document.createElement('tr');
+  cols.forEach(k=>{ const th=document.createElement('th'); th.textContent=k; trh.appendChild(th); });
+  thead.appendChild(trh); tbl.appendChild(thead);
+  const tb=document.createElement('tbody');
+  arr.forEach(o=>{
+    const tr=document.createElement('tr');
+    cols.forEach(k=>{ const td=document.createElement('td'); const v=o[k]; td.textContent= typeof v==='object' ? JSON.stringify(v) : (v??''); tr.appendChild(td); });
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb); dataBox.appendChild(tbl);
+}
+
+/* Загрузка локальных файлов */
+const dropZone = $('#dropZone'), fileInput = $('#fileInput'), btnClear = $('#btnClear');
+dropZone.addEventListener('dragover', e=>{ e.preventDefault(); dropZone.style.borderColor='var(--accent)'; });
+dropZone.addEventListener('dragleave', e=>{ e.preventDefault(); dropZone.style.borderColor='var(--line)'; });
+dropZone.addEventListener('drop', async e=>{
+  e.preventDefault(); dropZone.style.borderColor='var(--line)';
+  await handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', async e=>{ await handleFiles(e.target.files); fileInput.value=''; });
+btnClear.onclick = ()=>{
+  localStore.clear(); urlBindings.clear(); visited.clear();
+  queue.length=0; lastLinks.length=0; currentNodes=[]; currentSample=[];
+  linksBox.innerHTML=''; metaBox.innerHTML=''; queueBox.innerHTML=''; dataBox.innerHTML='';
+  renderBindings(); renderQueue(); setStatus('Очищено','ok'); bar.style.width='0%';
+};
+async function handleFiles(files){
+  for(const f of files){
+    const u8 = ab2u8(await f.arrayBuffer());
+    await ingestLocalFile(f.name, u8);
+  }
+  setStatus('Загружено локальных файлов: '+localStore.size,'ok');
+}
+
+/* Инжест локального файла (XML/ZIP) */
+async function ingestLocalFile(name, u8){
+  if(isZip(u8)){
+    try{
+      const files = await unzip(u8);
+      const xmlNames = Object.keys(files).filter(n=>n.toLowerCase().endsWith('.xml'));
+      if(!xmlNames.length){ setStatus('В ZIP нет XML: '+name,'warn'); return; }
+      const first = xmlNames[0];
+      const text = new TextDecoder().decode(files[first]);
+      const doc = parseXml(text); const type = detectType(doc);
+      const links = type==='list' ? extractLinksFromList(doc) : type==='meta' ? extractLinksFromMeta(doc) : [];
+      const nodes = type==='data' ? detectRepeater(doc.documentElement) : [];
+      localStore.set(name+'::'+first, { text, u8:files[first], doc, type, links, nodes });
+      currentDocName = name+'::'+first;
+      renderMetaInfo(doc); lastLinks = links; renderLinks(links); renderBindings();
+      currentNodes = nodes; btnPreview.disabled = nodes.length===0; btnExport.disabled=true; currentSample=[];
+      return;
+    }catch(e){ setStatus('Ошибка ZIP '+name+': '+e.message,'err'); return; }
+  }
+  const head = new TextDecoder().decode(u8.subarray(0, 4096));
+  if(!head.trim().startsWith('<')){ setStatus('Не XML и не ZIP: '+name,'warn'); return; }
+  try{
+    const text = new TextDecoder().decode(u8);
+    const doc = parseXml(text); const type = detectType(doc);
+    const links = type==='list' ? extractLinksFromList(doc) : type==='meta' ? extractLinksFromMeta(doc) : [];
+    const nodes = type==='data' ? detectRepeater(doc.documentElement) : [];
+    localStore.set(name, { text, u8, doc, type, links, nodes });
+    currentDocName = name; renderMetaInfo(doc); lastLinks = links; renderLinks(links); renderBindings();
+    currentNodes = nodes; btnPreview.disabled = nodes.length===0; btnExport.disabled=true; currentSample=[];
+  }catch(e){ setStatus('Ошибка XML '+name+': '+e.message,'err'); }
+}
+
+/* Привязка URL → локальный файл (когда fetch запрещён CORS) */
+function bindLocalForUrl(url){
+  const input = document.createElement('input'); input.type='file';
+  input.onchange = async e=>{
+    const f = e.target.files[0]; if(!f) return;
+    const u8 = ab2u8(await f.arrayBuffer());
+    urlBindings.set(url, f.name); renderBindings();
+    await ingestLocalFile(f.name, u8);
+    visited.set(url, { kind:'local', name:f.name });
+  };
+  input.click();
+}
+
+/* Очередь авто-переходов */
+function enqueue(url){
+  if(queue.find(q=>q.url===url)) return;
+  queue.push({ url, status:'в очереди' });
+  renderQueue();
+}
+$('#btnAddAll').onclick = ()=>{ lastLinks.forEach(l=>enqueue(l.href)); renderQueue(); };
+$('#btnStopQueue').onclick = ()=>{ stopFlag = true; setStatus('Остановка очереди','warn'); };
+$('#btnRunQueue').onclick = async ()=>{
+  stopFlag = false;
+  for(let i=0;i<queue.length;i++){
+    if(stopFlag) break;
+    const item = queue[i];
+    item.status = 'загрузка…'; renderQueue(); updateBar(i, queue.length);
+    try{
+      await processUrl(item.url);
+      item.status = 'готово';
+    }catch(e){
+      item.status = 'ошибка: '+e.message;
+    }
+    renderQueue(); updateBar(i+1, queue.length);
+  }
+  setStatus('Обработка очереди завершена','ok');
+};
+function updateBar(done,total){ const pct = total? Math.round(done*100/total) : 0; bar.style.width=pct+'%'; }
+
+/* Прямой URL (кнопка «Скачать и распарсить») */
+btnFetchUrl.onclick = async ()=>{
+  const u = (directUrl.value||'').trim();
+  if(!u){ setStatus('Укажите URL','err'); return; }
+  enqueue(u); renderQueue();
+  $('#btnRunQueue').click();
+};
+
+/* Процессинг URL: fetch (RAW GitHub и подобные CORS-дружелюбные домены) → иначе требуем привязку */
+async function processUrl(url){
+  if(visited.has(url)) return;
+  const allow = isCorsLikelyAllowed(url);
+  if(!allow){
+    // возможна попытка, но чаще всего CORS запретит; всё равно пробуем — если провал, просим привязку
+    try{
+      await tryFetchParse(url);
+      return;
+    }catch(e){
+      setStatus('Нужна локальная привязка для URL: '+url,'warn');
+      enqueueBindRow(url);
+      throw e;
+    }
+  } else {
+    await tryFetchParse(url);
+  }
+}
+
+/* Попытка fetch → XML или ZIP → парсинг */
+async function tryFetchParse(url){
+  const resp = await fetch(url, { mode:'cors', credentials:'omit' });
+  if(!resp.ok) throw new Error('HTTP '+resp.status);
+  const ctype = (resp.headers.get('content-type')||'').toLowerCase();
+  if(ctype.includes('xml') || ctype.includes('text/')){
+    const text = await resp.text();
+    const doc = parseXml(text);
+    const type = detectType(doc);
+    const links = type==='list' ? extractLinksFromList(doc) : type==='meta' ? extractLinksFromMeta(doc) : [];
+    const nodes = type==='data' ? detectRepeater(doc.documentElement) : [];
+    currentDocName = url; renderMetaInfo(doc); lastLinks = links; renderLinks(links); renderBindings();
+    currentNodes = nodes; btnPreview.disabled = nodes.length===0; btnExport.disabled=true; currentSample=[];
+    visited.set(url, { kind:'xml', name:url, doc, nodes, links });
+  } else {
+    const buf = ab2u8(await resp.arrayBuffer());
+    const files = await unzip(buf);
+    const xmlNames = Object.keys(files).filter(n=>n.toLowerCase().endsWith('.xml'));
+    if(!xmlNames.length) throw new Error('ZIP без XML');
+    const first = xmlNames[0];
+    const text = new TextDecoder().decode(files[first]);
+    const doc = parseXml(text); const type = detectType(doc);
+    const links = type==='list' ? extractLinksFromList(doc) : type==='meta' ? extractLinksFromMeta(doc) : [];
+    const nodes = type==='data' ? detectRepeater(doc.documentElement) : [];
+    currentDocName = url+'::'+first; renderMetaInfo(doc); lastLinks = links; renderLinks(links); renderBindings();
+    currentNodes = nodes; btnPreview.disabled = nodes.length===0; btnExport.disabled=true; currentSample=[];
+    visited.set(url, { kind:'zip', name:first, doc, nodes, links });
+  }
+}
+
+/* Строка в блок привязок при неудаче fetch */
+function enqueueBindRow(url){
+  const row=document.createElement('div'); row.className='rowline';
+  row.innerHTML = `
+    <div class="trim" style="flex:1 1 auto">
+      <div class="small">Нужен локальный файл для:</div>
+      <div class="mono small">${escapeHtml(url)}</div>
+    </div>
+    <div class="row"><button data-bind>Выбрать файл</button></div>
+  `;
+  row.querySelector('[data-bind]').onclick = ()=> bindLocalForUrl(url);
+  bindingsBox.appendChild(row);
+}
+
+/* Просмотр и экспорт */
+function nodeToFlatJson(node){
+  const obj={};
+  node.childNodes.forEach(ch=>{
+    if(ch.nodeType===1){
+      const k=ch.nodeName;
+      const v = ch.children && ch.children.length ? collapse(ch) : (ch.textContent||'').trim();
+      if(k in obj){ if(Array.isArray(obj[k])) obj[k].push(v); else obj[k]=[obj[k],v]; } else obj[k]=v;
+    }
+  });
+  return obj;
+}
+function collapse(el){
+  const o={};
+  el.childNodes.forEach(ch=>{
+    if(ch.nodeType===1){
+      const k=ch.nodeName;
+      const v = ch.children && ch.children.length ? collapse(ch) : (ch.textContent||'').trim();
+      if(k in o){ if(Array.isArray(o[k])) o[k].push(v); else o[k]=[o[k],v]; } else o[k]=v;
+    }
+  });
+  return o;
+}
+$('#btnPreview').onclick = ()=>{
+  const needle = (filterText.value||'').trim().toLowerCase();
+  const arr=[];
+  for(const el of currentNodes){
+    const o = nodeToFlatJson(el);
+    const s = JSON.stringify(o).toLowerCase();
+    if(!needle || s.includes(needle)){
+      arr.push(o);
+      if(arr.length>=10) break;
+    }
+  }
+  currentSample = arr; btnExport.disabled = !arr.length; renderDataPreview(arr);
+};
+$('#btnExport').onclick = ()=>{
+  const blob = new Blob([JSON.stringify(currentSample,null,2)], {type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='sample.json'; a.click(); URL.revokeObjectURL(a.href);
+};
+$('#btnResetView').onclick = ()=>{
+  dataBox.innerHTML=''; currentSample=[]; btnExport.disabled=true; filterText.value='';
+};
+
+/* Инициализация */
+setStatus('Готово','ok');
+</script>
+</body>
+</html>
 
