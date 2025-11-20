@@ -135,6 +135,34 @@
   }
   .hidden-block{display:none !important;}
 
+  .toast-container{
+    position:fixed;
+    bottom:18px;
+    right:18px;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    z-index:9999;
+  }
+  .toast{
+    background:#0f172a;
+    color:#ffffff;
+    padding:10px 14px;
+    border-radius:10px;
+    box-shadow:0 6px 24px rgba(0,0,0,0.16);
+    font-size:13px;
+    opacity:0.95;
+  }
+
+  .active-row{
+    border-left:4px solid var(--accent);
+    background:#f8fbff;
+  }
+  .active-row-soft{
+    border-left:4px solid var(--accent);
+    background:#f5f5ff;
+  }
+
   .filter-row{
     width:100%;
     align-items:flex-start;
@@ -172,10 +200,29 @@
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>Локальный просмотр открытых данных: list.xml → inspection-YYYY-M.xml → ZIP/XML с проверками</h1>
+  <div class="wrap">
+    <h1>Локальный просмотр открытых данных: list.xml → inspection-YYYY-M.xml → ZIP/XML с проверками</h1>
 
-  <div id="status" class="status">Готово</div>
+    <div id="status" class="status">Готово</div>
+
+    <div class="card" style="margin-top:10px">
+      <div class="row step-header">
+        <span class="step-header-title">Инструкция по использованию</span>
+        <button type="button" class="step-toggle" data-toggle="guideBody">Свернуть</button>
+      </div>
+      <div id="guideBody" class="small">
+        Инструкция:
+        <ol>
+          <li>Нажмите «Перейти на сайт и скачать list.xml» и скачайте файл.</li>
+          <li>Загрузите list.xml в блок «Исходный список».</li>
+          <li>Выберите интересующий набор (месяц или год).</li>
+          <li>Скачайте соответствующий месячный/годовой XML на сайте.</li>
+          <li>Загрузите его в блок «Месячный файл» (или «Годовой файл»).</li>
+          <li>Выберите нужную версию отчёта (ZIP).</li>
+          <li>Распакуйте ZIP и загрузите XML-файл данных в блок «Отчёт с данными».</li>
+        </ol>
+      </div>
+    </div>
 
   <!-- Шаг 1 -->
   <div class="step">
@@ -187,14 +234,17 @@
     <div class="grid g2" id="step1Body">
       <div class="card">
         <h2>Исходный список (list.xml)</h2>
+        <div class="small" id="currentDatasetInfo">Текущий набор не выбран</div>
         <div class="small">
           Загрузите файл <span class="mono">list.xml</span> (мастер-список наборов). Система распарсит элементы
           <span class="mono">&lt;item&gt;</span> и покажет доступные месяцы/планы с их ссылками.
         </div>
         <div class="row" style="margin-top:8px">
           <input type="file" id="fileListInput" accept=".xml"/>
+          <button id="btnListDownload" type="button">Перейти и скачать list.xml</button>
           <button id="btnClearList">Сбросить list.xml</button>
         </div>
+        <div class="small" id="listFileStatus" style="margin-top:4px"></div>
       </div>
 
       <div class="card">
@@ -216,6 +266,7 @@
     <div class="grid g2" id="step2Body">
       <div class="card">
         <h2>Месячный файл</h2>
+        <div class="small" id="currentDatasetInfoStep2">Текущий набор не выбран</div>
         <div class="small">
           Загрузите файл вида <span class="mono">7710146102-inspection-2025-6.xml</span>.
           Он содержит метаданные по месяцу и перечень версий отчёта (<span class="mono">&lt;dataversion&gt;</span>).
@@ -252,6 +303,7 @@
     <div class="grid g2" id="step3Body">
       <div class="card">
         <h2>Отчёт с данными</h2>
+        <div id="dataContext" class="status" style="margin-bottom:8px"></div>
         <div class="small">
           Загрузите ZIP с данными или уже распакованный XML-файл отчёта. <br>
           Для очень больших XML (например, 400 МБ) система автоматически возьмёт только выборку первых
@@ -335,6 +387,7 @@
       <div class="rowline small">Предпросмотр будет доступен после загрузки отчёта</div>
     </div>
   </div>
+  <div id="toastContainer" class="toast-container"></div>
 </div>
 
 <script>
@@ -435,6 +488,18 @@ function setStatus(text, level){
   else if(level==='err') el.classList.add('err');
 }
 
+function showToast(text){
+  const cont = $('#toastContainer');
+  if(!cont) return;
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = text;
+  cont.appendChild(toast);
+  setTimeout(() => {
+    toast.remove();
+  }, 1500);
+}
+
 function escapeHtml(s){
   return (s ?? '').replace(/[&<>"']/g, m => ({
     '&':'&amp;',
@@ -460,6 +525,69 @@ function getText(root, tagName){
 /* Шаг 1: list.xml */
 
 let listItems = [];
+let activeDataset = null;
+let activeVersion = null;
+let lastDataFileName = '';
+
+function setActiveDataset(title, identifier){
+  if(title){
+    activeDataset = {title: (title || '').trim(), identifier: (identifier || '').trim()};
+  }else{
+    activeDataset = null;
+  }
+  if(!activeDataset) activeVersion = null;
+  updateDatasetLabels();
+  renderListItems();
+  renderMetaVersions();
+  renderDataContext();
+}
+
+function updateDatasetLabels(){
+  const txt = activeDataset ? `Текущий набор: ${activeDataset.title || '(без названия)'}` : 'Текущий набор не выбран';
+  const el1 = $('#currentDatasetInfo');
+  const el2 = $('#currentDatasetInfoStep2');
+  if(el1) el1.textContent = txt;
+  if(el2) el2.textContent = txt;
+}
+
+function setActiveVersion(v){
+  activeVersion = v ? {...v} : null;
+  renderMetaVersions();
+  renderDataContext();
+}
+
+function renderDataContext(){
+  const box = $('#dataContext');
+  if(!box) return;
+  const parts = [];
+  if(activeDataset){
+    parts.push(`Набор: ${escapeHtml(activeDataset.title || '(без названия)')}`);
+  }else{
+    parts.push('Набор: не выбран');
+  }
+  if(activeVersion){
+    parts.push(`Версия отчёта: ${escapeHtml(activeVersion.created || '(дата не указана)')} — ${escapeHtml(activeVersion.prov || '')}`);
+  }else{
+    parts.push('Версия отчёта: не выбрана');
+  }
+  if(lastDataFileName){
+    parts.push(`Файл: ${escapeHtml(lastDataFileName)}`);
+  }else{
+    parts.push('Файл: не загружен');
+  }
+
+  box.className = 'status';
+  if(activeDataset && activeVersion && lastDataFileName){
+    box.classList.add('ok');
+  }else{
+    box.classList.add('warn');
+    parts.push('Файл не привязан к выбранному набору или версии отчёта.');
+  }
+  box.innerHTML = parts.map(p => `<div>${p}</div>`).join('');
+}
+
+updateDatasetLabels();
+renderDataContext();
 
 $('#fileListInput').addEventListener('change', async e => {
   const file = e.target.files[0];
@@ -476,6 +604,7 @@ $('#fileListInput').addEventListener('change', async e => {
       format: it.getAttribute('format') || ''
     }));
     renderListItems();
+    $('#listFileStatus').textContent = 'Загружен файл: list.xml (локальный)';
     setStatus('list.xml загружен, найдено элементов: ' + listItems.length, 'ok');
   }catch(err){
     listItems = [];
@@ -488,7 +617,12 @@ $('#btnClearList').addEventListener('click', () => {
   $('#fileListInput').value = '';
   listItems = [];
   renderListItems();
+  $('#listFileStatus').textContent = '';
   setStatus('list.xml сброшен', 'ok');
+});
+
+$('#btnListDownload').addEventListener('click', () => {
+  window.open('https://proverki.gov.ru/portal/public-open-data', '_blank');
 });
 
 function renderListItems(){
@@ -499,8 +633,12 @@ function renderListItems(){
     return;
   }
   listItems.forEach(item => {
+    const isActive = activeDataset && (
+      (activeDataset.identifier && activeDataset.identifier === item.identifier) ||
+      (activeDataset.title && activeDataset.title.toLowerCase() === (item.title || '').trim().toLowerCase())
+    );
     const row = document.createElement('div');
-    row.className = 'rowline';
+    row.className = 'rowline' + (isActive ? ' active-row' : '');
     row.innerHTML = `
       <div style="flex:1 1 auto;min-width:0">
         <div class="trim"><b>${escapeHtml(item.title || '(без названия)')}</b></div>
@@ -512,14 +650,22 @@ function renderListItems(){
       </div>
       <div class="row" style="flex:0 0 auto">
         <button data-copy>Копировать ссылку</button>
+        <button data-open>Перейти</button>
       </div>
     `;
     row.querySelector('[data-copy]').addEventListener('click', () => {
       if(item.link){
         navigator.clipboard?.writeText(item.link).then(
-          () => setStatus('Ссылка скопирована в буфер обмена', 'ok'),
+          () => showToast('Скопировано'),
           () => setStatus('Не удалось скопировать ссылку', 'warn')
         );
+      }else{
+        setStatus('У элемента нет ссылки link', 'warn');
+      }
+    });
+    row.querySelector('[data-open]').addEventListener('click', () => {
+      if(item.link){
+        window.open(item.link, '_blank');
       }else{
         setStatus('У элемента нет ссылки link', 'warn');
       }
@@ -538,13 +684,16 @@ $('#fileMetaInput').addEventListener('change', async e => {
   try{
     const text = await file.text();
     const doc = parseXml(text);
-    renderMetaInfo(doc);
+    const metaSummary = renderMetaInfo(doc);
+    setActiveDataset(metaSummary.title, metaSummary.identifier);
+    setActiveVersion(null);
     metaVersions = extractMetaVersions(doc);
     renderMetaVersions();
     setStatus('Месячный файл загружен, версий отчёта: ' + metaVersions.length, 'ok');
   }catch(err){
     metaVersions = [];
     renderMetaInfo(null);
+    setActiveDataset(null);
     renderMetaVersions();
     setStatus('Ошибка при обработке месячного файла: ' + err.message, 'err');
   }
@@ -555,6 +704,7 @@ $('#btnClearMeta').addEventListener('click', () => {
   metaVersions = [];
   renderMetaInfo(null);
   renderMetaVersions();
+  setActiveDataset(null);
   setStatus('Месячный файл сброшен', 'ok');
 });
 
@@ -563,7 +713,7 @@ function renderMetaInfo(doc){
   box.innerHTML = '';
   if(!doc){
     box.innerHTML = '<div class="rowline small">Месячный файл не загружен</div>';
-    return;
+    return {title:'', identifier:''};
   }
   const rootMeta = doc.getElementsByTagName('meta')[0] || doc.documentElement;
   const title = getText(rootMeta, 'title');
@@ -571,6 +721,7 @@ function renderMetaInfo(doc){
   const creator = getText(rootMeta, 'creator');
   const subject = getText(rootMeta, 'subject');
   const format = getText(rootMeta, 'format');
+  const identifier = getText(rootMeta, 'identifier');
   const structure = doc.getElementsByTagName('structureversion')[0];
   const strVer = structure ? (structure.textContent || '').trim() : '';
   const strCreated = getText(doc, 'created');
@@ -582,11 +733,13 @@ function renderMetaInfo(doc){
     <div class="small">Создатель: ${escapeHtml(creator || '-')}</div>
     <div class="small">Тема: ${escapeHtml(subject || '-')}</div>
     <div class="small">Формат: <span class="mono">${escapeHtml(format || '-')}</span></div>
+    <div class="small">Идентификатор набора: <span class="mono">${escapeHtml(identifier || '-')}</span></div>
     <div class="small">Версия структуры: <span class="mono">${escapeHtml(strVer || '-')}</span>,
       создано/обновлено: <span class="mono">${escapeHtml(strCreated || '-')}</span></div>
     <div class="small" style="margin-top:4px">${escapeHtml(desc || '')}</div>
   `;
   box.appendChild(row);
+  return {title, identifier};
 }
 
 function extractMetaVersions(doc){
@@ -613,8 +766,9 @@ function renderMetaVersions(){
     return;
   }
   metaVersions.forEach(v => {
+    const isActive = activeVersion && activeVersion.source === v.source && activeVersion.created === v.created;
     const row = document.createElement('div');
-    row.className = 'rowline';
+    row.className = 'rowline' + (isActive ? ' active-row-soft' : '');
     row.innerHTML = `
       <div style="flex:1 1 auto;min-width:0">
         <div><b>${escapeHtml(v.created || '(дата не указана)')}</b></div>
@@ -622,18 +776,22 @@ function renderMetaVersions(){
         <div class="small mono trim">${escapeHtml(v.source)}</div>
       </div>
       <div class="row" style="flex:0 0 auto">
+        <button data-select>Выбрать версию</button>
         <button data-copy>Копировать ссылку</button>
       </div>
     `;
     row.querySelector('[data-copy]').addEventListener('click', () => {
       if(v.source){
         navigator.clipboard?.writeText(v.source).then(
-          () => setStatus('Ссылка на ZIP скопирована в буфер обмена', 'ok'),
+          () => showToast('Скопировано'),
           () => setStatus('Не удалось скопировать ссылку', 'warn')
         );
       }else{
         setStatus('У версии нет ссылки source', 'warn');
       }
+    });
+    row.querySelector('[data-select]').addEventListener('click', () => {
+      setActiveVersion(v);
     });
     box.appendChild(row);
   });
@@ -758,6 +916,7 @@ function clearDataState(){
   fieldValueSamples.clear();
   columnVisibility.clear();
   lastPreviewColumns = [];
+  lastDataFileName = '';
   renderDataSummary();
   renderFields();
   renderColumnsBox();
@@ -766,12 +925,15 @@ function clearDataState(){
   $('#btnExport').disabled = true;
   $('#btnExportCsv').disabled = true;
   resetFiltersUI();
+  renderDataContext();
 }
 
 $('#fileDataInput').addEventListener('change', async e => {
   const file = e.target.files[0];
   if(!file) return;
   try{
+    lastDataFileName = file.name;
+    renderDataContext();
     await loadDataFileSmart(file);
   }catch(err){
     clearDataState();
@@ -847,6 +1009,8 @@ async function unzip(u8){
 
 async function loadDataFileSmart(file){
   clearDataState();
+  lastDataFileName = file.name || '';
+  renderDataContext();
 
   const sizeMB = (file.size / (1024*1024)).toFixed(1);
   const bufHead = await file.slice(0, 8).arrayBuffer();
